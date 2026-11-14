@@ -74,10 +74,10 @@ async fn run() {
     let cfg = Config::from_env();
     vips::init(cfg.vips_concurrency);
 
-    let source_client = storage::build_s3_client(&cfg.s3).await;
+    let source_client = storage::build_s3_client(&cfg.s3, true).await;
     let s3_cache = match &cfg.cache_bucket {
         Some(bucket) => {
-            let client = storage::build_s3_client(&cfg.cache_s3).await;
+            let client = storage::build_s3_client(&cfg.cache_s3, false).await;
             Some(S3Cache::new(client, bucket.clone(), cfg.cache_prefix.clone(), cfg.ttl))
         }
         None => None,

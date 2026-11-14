@@ -13,7 +13,9 @@ use crate::config::{Config, S3Params};
 use crate::error::AppError;
 use crate::options::Format;
 
-pub async fn build_s3_client(p: &S3Params) -> Client {
+/// `retries: false` is for the result cache, where a failed lookup must cost
+/// one round trip, not three: it is simply treated as a miss.
+pub async fn build_s3_client(p: &S3Params, retries: bool) -> Client {
     let mut loader = aws_config::defaults(BehaviorVersion::latest());
 
     let env_region = std::env::var("AWS_REGION").or_else(|_| std::env::var("AWS_DEFAULT_REGION")).ok();
@@ -31,7 +33,11 @@ pub async fn build_s3_client(p: &S3Params) -> Client {
     }
     let shared = loader.load().await;
 
-    let conf = aws_sdk_s3::config::Builder::from(&shared)
+    let mut builder = aws_sdk_s3::config::Builder::from(&shared);
+    if !retries {
+        builder = builder.retry_config(aws_sdk_s3::config::retry::RetryConfig::disabled());
+    }
+    let conf = builder
         // Custom endpoints (MinIO, R2, Spaces...) generally want path-style.
         .force_path_style(p.force_path_style.unwrap_or(p.endpoint.is_some()))
         // Optional checksums break several S3-compatible providers.
@@ -178,8 +184,18 @@ impl S3Cache {
         let out = match self.client.get_object().bucket(&self.bucket).key(object).send().await {
             Ok(o) => o,
             Err(e) => {
-                let detail = format!("{}", DisplayErrorContext(&e));
-                return if e.into_service_error().is_no_such_key() { Ok(None) } else { Err(detail) };
+                let detail = brief(&format!("{}", DisplayErrorContext(&e)));
+                let svc = e.into_service_error();
+                if svc.is_no_such_key() {
+                    return Ok(None);
+                }
+                // Some S3 front ends answer a missing object with a bare 5xx
+                // page instead of NoSuchKey. No S3 error code = plain miss.
+                if aws_sdk_s3::error::ProvideErrorMetadata::code(&svc).is_none() {
+                    tracing::debug!(object, error = %detail, "S3 cache lookup failed without an S3 error code");
+                    return Ok(None);
+                }
+                return Err(detail);
             }
         };
         let declared = out.content_type().and_then(Format::from_mime);
@@ -202,6 +218,11 @@ impl S3Cache {
             .send()
             .await
             .map(|_| ())
-            .map_err(|e| format!("{}", DisplayErrorContext(&e)))
+            .map_err(|e| brief(&format!("{}", DisplayErrorContext(&e))))
     }
+}
+
+/// SDK errors print the whole HTTP exchange; keep log lines readable.
+fn brief(s: &str) -> String {
+    s.chars().take(240).collect()
 }
