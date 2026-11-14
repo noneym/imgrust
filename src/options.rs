@@ -264,11 +264,18 @@ fn verify_imgproxy(sig: &str, signed_path: &str, cfg: &Config) -> Result<(), App
         return if cfg.thumbor_key.is_empty() { Ok(()) } else { Err(invalid_signature()) };
     }
     let raw = decode_signature(sig).ok_or_else(invalid_signature)?;
-    let mut mac = Hmac::<Sha256>::new_from_slice(&cfg.key).expect("hmac accepts any key length");
-    mac.update(&cfg.salt);
-    mac.update(signed_path.as_bytes());
-    // Constant-time comparison.
-    mac.verify_slice(&raw).map_err(|_| invalid_signature())
+    let check = |payload: &str| {
+        let mut mac = Hmac::<Sha256>::new_from_slice(&cfg.key).expect("hmac accepts any key length");
+        mac.update(&cfg.salt);
+        mac.update(payload.as_bytes());
+        // Constant-time comparison.
+        mac.verify_slice(&raw).is_ok()
+    };
+    if check(signed_path) || restore_plain_path(signed_path).is_some_and(|p| check(&p)) {
+        Ok(())
+    } else {
+        Err(invalid_signature())
+    }
 }
 
 /// thumbor: base64url(HMAC-SHA1(security_key, rest)).
@@ -291,6 +298,22 @@ fn verify_thumbor(sig: &str, rest: &str, cfg: &Config) -> Result<(), AppError> {
     }
 }
 
+/// Reverse proxies commonly collapse "//" in paths, turning `s3://bucket/key`
+/// into `s3:/bucket/key`. Put the second slash back.
+fn restore_scheme(s: &str) -> Option<String> {
+    ["s3:/", "https:/", "http:/"].iter().find_map(|p| {
+        let rest = s.strip_prefix(p)?;
+        (!rest.starts_with('/')).then(|| format!("{p}/{rest}"))
+    })
+}
+
+/// Same repair for a whole imgproxy-style path, so a signature made over the
+/// original URL still verifies after a proxy collapsed the slashes.
+fn restore_plain_path(path: &str) -> Option<String> {
+    let at = path.find("/plain/")? + "/plain/".len();
+    Some(format!("{}{}", &path[..at], restore_scheme(&path[at..])?))
+}
+
 fn has_scheme(s: &str) -> bool {
     s.starts_with("http://") || s.starts_with("https://") || s.starts_with("s3://")
 }
@@ -303,6 +326,9 @@ pub fn parse(path: &str, cfg: &Config) -> Result<ImageRequest, AppError> {
         Style::Imgproxy => {
             verify_imgproxy(sig, &path[sig.len()..], cfg)?;
             let (mut source, options) = parse_imgproxy(rest, cfg)?;
+            if let Some(fixed) = restore_scheme(&source) {
+                source = fixed;
+            }
             if !has_scheme(&source) {
                 source.insert_str(0, &cfg.base_url);
             }
@@ -311,6 +337,9 @@ pub fn parse(path: &str, cfg: &Config) -> Result<ImageRequest, AppError> {
         Style::Thumbor => {
             verify_thumbor(sig, rest, cfg)?;
             let (mut source, options) = parse_thumbor(rest)?;
+            if let Some(fixed) = restore_scheme(&source) {
+                source = fixed;
+            }
             if !has_scheme(&source) {
                 let base = if cfg.thumbor_base_url.is_empty() { &cfg.base_url } else { &cfg.thumbor_base_url };
                 source.insert_str(0, base);
