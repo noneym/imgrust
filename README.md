@@ -145,6 +145,8 @@ print(f"/{sig}{path}")
 4. S3 cache bucket: `{prefix}{k[0:2]}/{k[2:4]}/{key}`, stored with its `Content-Type`.
 5. Otherwise the source is fetched and processed; the result is returned immediately and uploaded to the cache bucket in the background.
 
+**Migrating from thumbor:** point `IMGRUST_CACHE_S3_BUCKET` at thumbor's result-storage bucket and set `IMGRUST_THUMBOR_CACHE_ROOT`. Everything thumbor already rendered is served straight from that bucket, and what imgrust renders is stored in the same layout, so both can run side by side on one cache. imgproxy-style variants live under `IMGRUST_CACHE_S3_PREFIX` in the same bucket.
+
 There is no expiry inside imgrust: use an S3 **lifecycle rule** on the cache bucket/prefix to expire old variants. If a source object changes under the same URL, change the URL or add a `cb:` option; bumping `IMGRUST_CACHE_S3_PREFIX` invalidates the whole S3 cache.
 
 ## Configuration
@@ -155,6 +157,9 @@ There is no expiry inside imgrust: use an S3 **lifecycle rule** on the cache buc
 | `IMGRUST_KEY`, `IMGRUST_SALT` | – | Hex-encoded signing key and salt. No key = unsigned URLs accepted |
 | `IMGRUST_THUMBOR_KEY` | – | Plain-text security key for thumbor-style URLs |
 | `IMGRUST_THUMBOR_BASE_URL` | `IMGRUST_BASE_URL` | Prefix for relative thumbor-style image paths (e.g. `s3://media/`) |
+| `IMGRUST_THUMBOR_CACHE_ROOT` | – | Share thumbor's S3 result storage: thumbor-style results are read from and written to `{root}/[auto_webp/]{request path}` in the cache bucket, the layout of `thumbor_aws.result_storage` (set it to thumbor's `AWS_RESULT_STORAGE_ROOT_PATH`, e.g. `rs`) |
+| `IMGRUST_THUMBOR_AUTO_WEBP` | `false` | thumbor's `AUTO_WEBP` for thumbor-style URLs when sharing its result storage |
+| `IMGRUST_ALLOW_UNSAFE_URL` | `false` | Like thumbor's `ALLOW_UNSAFE_URL`: accept unsigned URLs (`/unsafe/…`, and imgproxy-style URLs when no `IMGRUST_KEY` is set) even though a signing key is configured |
 | `IMGRUST_BASE_URL` | – | Prefix prepended to source URLs that have no scheme (e.g. `s3://media/`) |
 | `IMGRUST_ALLOWED_SOURCES` | any | Comma-separated list of allowed source URL prefixes |
 | `IMGRUST_S3_ENDPOINT` | AWS | Custom S3 endpoint (R2, MinIO, Spaces…) |

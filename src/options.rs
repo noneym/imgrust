@@ -145,6 +145,9 @@ pub struct Negotiated {
 pub struct ImageRequest {
     pub source: String,
     pub options: Options,
+    /// For thumbor-style URLs: the percent-decoded request path, which is what
+    /// thumbor's result storage keys its cache objects by.
+    pub thumbor_path: Option<String>,
 }
 
 impl ImageRequest {
@@ -261,7 +264,7 @@ fn invalid_signature() -> AppError {
 fn verify_imgproxy(sig: &str, signed_path: &str, cfg: &Config) -> Result<(), AppError> {
     if cfg.key.is_empty() {
         // Never let one dialect become an unsigned side door for the other.
-        return if cfg.thumbor_key.is_empty() { Ok(()) } else { Err(invalid_signature()) };
+        return if cfg.thumbor_key.is_empty() || cfg.allow_unsafe { Ok(()) } else { Err(invalid_signature()) };
     }
     let raw = decode_signature(sig).ok_or_else(invalid_signature)?;
     let check = |payload: &str| {
@@ -281,7 +284,10 @@ fn verify_imgproxy(sig: &str, signed_path: &str, cfg: &Config) -> Result<(), App
 /// thumbor: base64url(HMAC-SHA1(security_key, rest)).
 fn verify_thumbor(sig: &str, rest: &str, cfg: &Config) -> Result<(), AppError> {
     if cfg.thumbor_key.is_empty() {
-        return if cfg.key.is_empty() { Ok(()) } else { Err(invalid_signature()) };
+        return if cfg.key.is_empty() || cfg.allow_unsafe { Ok(()) } else { Err(invalid_signature()) };
+    }
+    if sig == "unsafe" && cfg.allow_unsafe {
+        return Ok(());
     }
     let raw = decode_signature(sig).ok_or_else(invalid_signature)?;
     let check = |payload: &[u8]| {
@@ -322,7 +328,8 @@ pub fn parse(path: &str, cfg: &Config) -> Result<ImageRequest, AppError> {
     let path = path.strip_prefix('/').unwrap_or(path);
     let (sig, rest) = path.split_once('/').ok_or_else(|| bad("invalid URL"))?;
 
-    let (source, options) = match detect_style(sig, rest) {
+    let style = detect_style(sig, rest);
+    let (source, options) = match style {
         Style::Imgproxy => {
             verify_imgproxy(sig, &path[sig.len()..], cfg)?;
             let (mut source, options) = parse_imgproxy(rest, cfg)?;
@@ -360,7 +367,9 @@ pub fn parse(path: &str, cfg: &Config) -> Result<ImageRequest, AppError> {
         return Err(bad(format!("requested dimensions exceed the limit of {}px", cfg.max_dimension)));
     }
 
-    Ok(ImageRequest { source, options })
+    let thumbor_path =
+        (style == Style::Thumbor).then(|| percent_decode_str(path).decode_utf8_lossy().trim_start_matches('/').to_string());
+    Ok(ImageRequest { source, options, thumbor_path })
 }
 
 /// thumbor grammar:

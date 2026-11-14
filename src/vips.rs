@@ -192,6 +192,18 @@ fn sniff(b: &[u8]) -> Option<SourceFormat> {
     None
 }
 
+/// Format of an already encoded image, for cache objects without a Content-Type.
+pub fn sniff_output_format(b: &[u8]) -> Option<Format> {
+    Some(match sniff(b)? {
+        SourceFormat::Jpeg => Format::Jpeg,
+        SourceFormat::Png => Format::Png,
+        SourceFormat::Webp => Format::Webp,
+        SourceFormat::Gif => Format::Gif,
+        SourceFormat::Avif => Format::Avif,
+        SourceFormat::Heic => return None,
+    })
+}
+
 pub struct Output {
     pub data: Bytes,
     pub format: Format,

@@ -168,34 +168,34 @@ impl S3Cache {
         S3Cache { client, bucket, prefix, cache_control: format!("public, max-age={ttl}") }
     }
 
-    fn object_key(&self, key: &str) -> String {
+    /// Object name for a variant identified by its hash key.
+    pub fn hashed_key(&self, key: &str) -> String {
         // Two levels of fan-out keep listings manageable.
         format!("{}{}/{}/{}", self.prefix, &key[0..2], &key[2..4], key)
     }
 
-    pub async fn get(&self, key: &str) -> Result<Option<(Bytes, Format)>, String> {
-        let out = match self.client.get_object().bucket(&self.bucket).key(self.object_key(key)).send().await {
+    pub async fn get(&self, object: &str) -> Result<Option<(Bytes, Format)>, String> {
+        let out = match self.client.get_object().bucket(&self.bucket).key(object).send().await {
             Ok(o) => o,
             Err(e) => {
                 let detail = format!("{}", DisplayErrorContext(&e));
                 return if e.into_service_error().is_no_such_key() { Ok(None) } else { Err(detail) };
             }
         };
-        let Some(format) = out.content_type().and_then(Format::from_mime) else {
-            return Ok(None);
-        };
+        let declared = out.content_type().and_then(Format::from_mime);
         let data = out.body.collect().await.map_err(|e| e.to_string())?.into_bytes();
-        if data.is_empty() {
-            return Ok(None);
+        // Objects written by other tools may lack a usable Content-Type.
+        match declared.or_else(|| crate::vips::sniff_output_format(&data)) {
+            Some(format) if !data.is_empty() => Ok(Some((data, format))),
+            _ => Ok(None),
         }
-        Ok(Some((data, format)))
     }
 
-    pub async fn put(&self, key: &str, data: Bytes, format: Format) -> Result<(), String> {
+    pub async fn put(&self, object: &str, data: Bytes, format: Format) -> Result<(), String> {
         self.client
             .put_object()
             .bucket(&self.bucket)
-            .key(self.object_key(key))
+            .key(object)
             .content_type(format.mime())
             .cache_control(&self.cache_control)
             .body(ByteStream::from(data))

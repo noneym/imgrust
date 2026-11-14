@@ -21,6 +21,12 @@ pub struct Config {
     /// thumbor-style URLs: plain-text security key and base for relative paths.
     pub thumbor_key: Vec<u8>,
     pub thumbor_base_url: String,
+    /// When set, thumbor-style results use thumbor_aws' result-storage layout
+    /// (`{root}/[auto_webp/]{request path}`) so both can share one cache.
+    pub thumbor_cache_root: Option<String>,
+    pub thumbor_auto_webp: bool,
+    /// Like thumbor's ALLOW_UNSAFE_URL: accept unsigned URLs even when a key is set.
+    pub allow_unsafe: bool,
 
     pub base_url: String,
     pub allowed_sources: Vec<String>,
@@ -114,6 +120,9 @@ impl Config {
             salt,
             thumbor_key: var("IMGRUST_THUMBOR_KEY").map(String::into_bytes).unwrap_or_default(),
             thumbor_base_url: var("IMGRUST_THUMBOR_BASE_URL").unwrap_or_default(),
+            thumbor_cache_root: var("IMGRUST_THUMBOR_CACHE_ROOT").map(|r| format!("{}/", r.trim_matches('/'))),
+            thumbor_auto_webp: flag("IMGRUST_THUMBOR_AUTO_WEBP").unwrap_or(false),
+            allow_unsafe: flag("IMGRUST_ALLOW_UNSAFE_URL").unwrap_or(false),
             base_url: var("IMGRUST_BASE_URL").unwrap_or_default(),
             allowed_sources: var("IMGRUST_ALLOWED_SOURCES")
                 .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())

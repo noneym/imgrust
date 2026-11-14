@@ -218,13 +218,25 @@ async fn serve(app: &Arc<App>, method: &Method, uri: &Uri, headers: &HeaderMap) 
     // Format negotiation only matters when the URL does not pin a format.
     let auto = req.options.format.is_none();
     let accept = headers.get(header::ACCEPT).and_then(|v| v.to_str().ok()).unwrap_or("");
-    let neg = Negotiated {
-        webp: auto && app.cfg.auto_webp && accept.contains("image/webp"),
-        avif: auto && app.cfg.auto_avif && accept.contains("image/avif"),
+    let thumbor_cache = req.thumbor_path.is_some() && app.cfg.thumbor_cache_root.is_some();
+    let neg = if thumbor_cache {
+        // Sharing thumbor's result storage: follow its AUTO_WEBP rule only.
+        Negotiated { webp: auto && app.cfg.thumbor_auto_webp && accept.contains("image/webp"), avif: false }
+    } else {
+        Negotiated {
+            webp: auto && app.cfg.auto_webp && accept.contains("image/webp"),
+            avif: auto && app.cfg.auto_avif && accept.contains("image/avif"),
+        }
     };
 
     let key = req.cache_key(neg, &app.cfg);
     let etag = format!("\"{}\"", &key[..32]);
+
+    // Where this variant lives in the S3 cache.
+    let object = app.s3_cache.as_ref().map(|c| match (&req.thumbor_path, &app.cfg.thumbor_cache_root) {
+        (Some(path), Some(root)) => format!("{root}{}{path}", if neg.webp { "auto_webp/" } else { "" }),
+        _ => c.hashed_key(&key),
+    });
 
     // The key covers source URL, options, negotiated format and encoder
     // settings, so a matching ETag can be answered without touching any cache.
@@ -242,10 +254,10 @@ async fn serve(app: &Arc<App>, method: &Method, uri: &Uri, headers: &HeaderMap) 
     // in its own task so a client disconnect does not throw it away.
     let origin = Arc::new(AtomicU8::new(ORIGIN_MEMORY));
     let entry = {
-        let (app2, key2, origin2) = (app.clone(), key.clone(), origin.clone());
+        let (app2, origin2) = (app.clone(), origin.clone());
         app.mem
             .try_get_with(key, async move {
-                tokio::spawn(async move { produce(app2, key2, req, neg, origin2).await })
+                tokio::spawn(async move { produce(app2, object, req, neg, origin2).await })
                     .await
                     .unwrap_or_else(|e| Err(AppError::internal(format!("processing task failed: {e}"))))
             })
@@ -290,13 +302,13 @@ fn common_headers(h: &mut HeaderMap, app: &App, etag: &str, auto: bool) {
 /// Cold path: S3 cache lookup, then fetch + process + write back.
 async fn produce(
     app: Arc<App>,
-    key: String,
+    object: Option<String>,
     req: ImageRequest,
     neg: Negotiated,
     origin: Arc<AtomicU8>,
 ) -> Result<Arc<Entry>, AppError> {
-    if let Some(cache) = &app.s3_cache {
-        match cache.get(&key).await {
+    if let (Some(cache), Some(object)) = (&app.s3_cache, &object) {
+        match cache.get(object).await {
             Ok(Some((data, format))) => {
                 origin.store(ORIGIN_S3, Ordering::Relaxed);
                 return Ok(Arc::new(Entry { data, format }));
@@ -338,11 +350,11 @@ async fn produce(
     })?;
     app.metrics.processed_us.fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
 
-    if let Some(cache) = app.s3_cache.clone() {
+    if let (Some(cache), Some(object)) = (app.s3_cache.clone(), object) {
         let (data, format) = (out.data.clone(), out.format);
         // Write-behind: the client never waits for the cache upload.
         tokio::spawn(async move {
-            if let Err(e) = cache.put(&key, data, format).await {
+            if let Err(e) = cache.put(&object, data, format).await {
                 tracing::warn!(error = %e, "S3 cache write failed");
             }
         });
