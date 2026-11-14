@@ -1,0 +1,35 @@
+# Local stack: imgrust + S3Mock (a local S3-compatible server) with a source
+# bucket ("images") and a cache bucket ("imgrust-cache"). For production,
+# point the IMGRUST_S3_* variables at your real S3 provider and set the
+# signing keys.
+#
+#   docker compose up --build
+#   curl -T photo.jpg http://localhost:9090/images/photo.jpg
+#   curl -o out.webp "http://localhost:8080/insecure/rs:fill:400:300/plain/s3://images/photo.jpg@webp"
+#   curl -o out.jpg  "http://localhost:8080/unsafe/400x300/photo.jpg"
+#
+# Port 8080 taken? IMGRUST_PORT=8089 docker compose up --build
+
+services:
+  imgrust:
+    build: .
+    ports:
+      - "${IMGRUST_PORT:-8080}:8080"
+    environment:
+      IMGRUST_S3_ENDPOINT: http://s3:9090
+      IMGRUST_S3_ACCESS_KEY: local
+      IMGRUST_S3_SECRET_KEY: local
+      IMGRUST_CACHE_S3_BUCKET: imgrust-cache
+      IMGRUST_CACHE_S3_PREFIX: v1/
+      # thumbor-style URLs (/unsafe/300x200/photo.jpg) resolve against this
+      IMGRUST_THUMBOR_BASE_URL: s3://images/
+    depends_on:
+      - s3
+    restart: unless-stopped
+
+  s3:
+    image: adobe/s3mock:latest
+    ports:
+      - "${S3_PORT:-9090}:9090"
+    environment:
+      COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS: images,imgrust-cache

@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>imgrust — fast image proxy in Rust with S3 cache</title>
+<meta name="description" content="imgrust is a self-hosted image processing proxy written in Rust. Resize, convert and optimize images on the fly, read sources from S3, and persist every processed variant back to S3. Animated WebP included.">
+<meta property="og:title" content="imgrust — fast image proxy in Rust">
+<meta property="og:description" content="Resize, convert and cache images on the fly. S3 sources, S3-backed result cache, animated WebP. One Docker container.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://imgrust.com">
+<link rel="canonical" href="https://imgrust.com">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23e8590c'/%3E%3Cpath d='M7 23l6-8 4 5 3-4 5 7z' fill='%23fff'/%3E%3Ccircle cx='21.5' cy='10.5' r='2.5' fill='%23fff'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #0d0e10;
+    --panel: #15171b;
+    --panel-2: #1b1e23;
+    --line: #272b32;
+    --text: #e9eaec;
+    --muted: #9aa0aa;
+    --accent: #ff6b1a;
+    --accent-soft: rgba(255, 107, 26, .12);
+    --green: #5fd38d;
+    --blue: #7cb7ff;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+  a { color: inherit; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+
+  header { position: sticky; top: 0; z-index: 10; background: rgba(13, 14, 16, .85); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+  header .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; text-decoration: none; letter-spacing: -.01em; }
+  .logo svg { width: 26px; height: 26px; }
+  .logo span b { color: var(--accent); font-weight: 700; }
+  nav { display: flex; align-items: center; gap: 22px; font-size: 14px; }
+  nav a { color: var(--muted); text-decoration: none; }
+  nav a:hover { color: var(--text); }
+  nav a.gh { color: var(--text); border: 1px solid var(--line); padding: 6px 12px; border-radius: 8px; }
+  nav a.gh:hover { border-color: var(--accent); }
+  @media (max-width: 640px) { nav a:not(.gh) { display: none; } }
+
+  .hero { padding: 84px 0 56px; background: radial-gradient(900px 380px at 50% -80px, rgba(255, 107, 26, .16), transparent 70%); }
+  .tag { display: inline-block; font: 12px var(--mono); color: var(--accent); background: var(--accent-soft); border: 1px solid rgba(255, 107, 26, .3); padding: 4px 10px; border-radius: 999px; }
+  h1 { font-size: clamp(34px, 6vw, 60px); line-height: 1.06; letter-spacing: -.03em; margin: 18px 0 18px; max-width: 16ch; }
+  h1 em { font-style: normal; color: var(--accent); }
+  .lead { color: var(--muted); font-size: clamp(16px, 2.1vw, 19px); max-width: 62ch; margin: 0 0 30px; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 10px; font-weight: 600; font-size: 15px; text-decoration: none; border: 1px solid var(--line); background: var(--panel); }
+  .btn:hover { border-color: #3a404a; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #160800; }
+  .btn.primary:hover { filter: brightness(1.08); }
+
+  pre, code { font-family: var(--mono); }
+  pre { margin: 0; padding: 16px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; font-size: 13.5px; line-height: 1.65; color: #d6d9de; }
+  pre .c { color: #6c7380; }
+  pre .k { color: var(--accent); }
+  pre .s { color: var(--green); }
+  .term { margin-top: 44px; }
+  .term-bar { display: flex; gap: 6px; padding: 10px 14px; background: var(--panel-2); border: 1px solid var(--line); border-bottom: 0; border-radius: 12px 12px 0 0; }
+  .term-bar i { width: 10px; height: 10px; border-radius: 50%; background: #343942; }
+  .term pre { border-radius: 0 0 12px 12px; }
+
+  section { padding: 64px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: clamp(24px, 3.4vw, 34px); letter-spacing: -.02em; line-height: 1.15; margin: 0 0 10px; }
+  .sub { color: var(--muted); max-width: 64ch; margin: 0 0 34px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px; }
+  .card h3 { margin: 0 0 6px; font-size: 16.5px; letter-spacing: -.01em; }
+  .card p { margin: 0; color: var(--muted); font-size: 14.5px; }
+  .card .ico { width: 34px; height: 34px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; margin-bottom: 14px; }
+  .card .ico svg { width: 18px; height: 18px; }
+
+  .flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; counter-reset: step; }
+  .step { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; position: relative; }
+  .step::before { counter-increment: step; content: counter(step); font: 600 12px var(--mono); color: var(--accent); background: var(--accent-soft); width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; margin-bottom: 12px; }
+  .step b { display: block; font-size: 15px; margin-bottom: 4px; }
+  .step span { color: var(--muted); font-size: 14px; }
+  .step code { color: var(--blue); font-size: 12.5px; }
+
+  .anatomy { font: 14px/2 var(--mono); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; overflow-x: auto; white-space: nowrap; }
+  .anatomy span { padding: 3px 6px; border-radius: 6px; }
+  .a-sig { background: rgba(124, 183, 255, .13); color: var(--blue); }
+  .a-opt { background: var(--accent-soft); color: var(--accent); }
+  .a-src { background: rgba(95, 211, 141, .12); color: var(--green); }
+  .a-ext { background: rgba(214, 160, 255, .13); color: #d6a0ff; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 14px 0 0; padding: 0; list-style: none; color: var(--muted); font-size: 14px; }
+  .legend b { font-weight: 600; }
+
+  .builder { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 30px; }
+  @media (max-width: 760px) { .builder { grid-template-columns: 1fr; } }
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-content: start; }
+  .fields label { display: grid; gap: 5px; font-size: 12.5px; color: var(--muted); }
+  .fields label.full { grid-column: 1 / -1; }
+  input, select { width: 100%; background: var(--bg); border: 1px solid var(--line); color: var(--text); padding: 9px 10px; border-radius: 8px; font: 14px var(--mono); }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  .out { display: flex; flex-direction: column; gap: 10px; }
+  .out pre { flex: 1; white-space: pre-wrap; word-break: break-all; min-height: 120px; color: var(--green); }
+  .copy { align-self: flex-start; cursor: pointer; font: 600 13px var(--sans); color: var(--text); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .table { border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; background: var(--panel); }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  th { color: var(--muted); font-weight: 500; font-size: 12.5px; text-transform: uppercase; letter-spacing: .05em; background: var(--panel-2); }
+  td code { color: var(--accent); font-size: 13px; white-space: nowrap; }
+  td:last-child { color: var(--muted); }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+
+  footer { border-top: 1px solid var(--line); padding: 30px 0 46px; color: var(--muted); font-size: 14px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--text); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="logo" href="#top" aria-label="imgrust">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#e8590c"/><path d="M7 23l6-8 4 5 3-4 5 7z" fill="#fff"/><circle cx="21.5" cy="10.5" r="2.5" fill="#fff"/></svg>
+      <span>img<b>rust</b></span>
+    </a>
+    <nav>
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#url">URL format</a>
+      <a href="#config">Configuration</a>
+      <a class="gh" href="https://github.com/noneym/imgrust">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <div class="hero">
+    <div class="wrap">
+      <span class="tag">Rust · libvips · S3</span>
+      <h1>Images, resized on the fly. <em>Cached in S3.</em></h1>
+      <p class="lead">imgrust is a self-hosted image proxy. Point it at your S3 bucket or any HTTP origin, describe the image you want in the URL, and get it back resized, converted and optimized. Every processed variant is written back to S3, so it is computed exactly once — across restarts and across replicas.</p>
+      <div class="cta">
+        <a class="btn primary" href="#start">Run it in 60 seconds</a>
+        <a class="btn" href="https://github.com/noneym/imgrust">View source</a>
+      </div>
+
+      <div class="term">
+        <div class="term-bar"><i></i><i></i><i></i></div>
+<pre><span class="c"># 400×300 cover crop of an S3 object, served as WebP</span>
+curl <span class="s">"https://img.example.com/<span class="k">{signature}</span>/rs:fill:400:300/q:80/plain/s3://media/cats/tom.jpg@webp"</span>
+
+<span class="c"># animated GIF in, animated WebP out, at half the width</span>
+curl <span class="s">"https://img.example.com/<span class="k">{signature}</span>/w:320/plain/https://cdn.example.com/party.gif@webp"</span></pre>
+      </div>
+    </div>
+  </div>
+
+  <section id="features">
+    <div class="wrap">
+      <h2>Built for load, not for demos</h2>
+      <p class="sub">A small Rust server around libvips, the same image engine that powers the fastest image services. No garbage collector, no per-request processes, predictable memory.</p>
+      <div class="grid">
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3z"/><path d="M4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></div>
+          <h3>S3 in, S3 out</h3>
+          <p>Read originals with <code>s3://bucket/key</code> and persist processed variants to a cache bucket. Works with AWS S3, Cloudflare R2, MinIO, DigitalOcean Spaces and other S3-compatible stores.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="M7 3h12a2 2 0 0 1 2 2v12"/><path d="M8 10l5 2.5L8 15z"/></svg></div>
+          <h3>Animated WebP &amp; GIF</h3>
+          <p>Animations stay animations. Every frame is resized and cropped, timing and looping are preserved, and GIFs are transparently served as much smaller animated WebP to browsers that accept it.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4.5-8 4.5-8-4.5z"/><path d="M4 12l8 4.5 8-4.5"/><path d="M4 16.500l8 4.5 8-4.5"/></svg></div>
+          <h3>Two cache layers</h3>
+          <p>A byte-bounded in-memory cache answers hot variants without touching the network. The S3 layer makes results durable and shared between every replica you run.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg></div>
+          <h3>No thundering herd</h3>
+          <p>Concurrent requests for the same uncached variant are coalesced into a single computation. CPU work runs on a bounded worker pool, and overload is shed with <code>503</code> instead of eating memory.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+          <h3>Signed URLs</h3>
+          <p>HMAC-SHA256 signatures stop anyone from using your server as a free resize farm. Source allow-lists and limits on file size, resolution and frame count guard against abuse.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6 4 4 6-8"/><path d="M14 7h6v6"/></svg></div>
+          <h3>Automatic modern formats</h3>
+          <p>Leave the format out of the URL and imgrust negotiates WebP or AVIF from the <code>Accept</code> header, with correct <code>Vary</code>, <code>ETag</code> and <code>Cache-Control</code> so your CDN does the rest.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7l-5 5 5 5"/><path d="M16 7l5 5-5 5"/></svg></div>
+          <h3>imgproxy &amp; thumbor URLs</h3>
+          <p>Both URL dialects are served side by side, each with its own signature scheme: <code>/sig/rs:fit:0:210/plain/s3://…</code> and <code>/sig/372x372/path.jpg</code>. Existing URLs and client libraries keep working.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="10" rx="2"/><path d="M7 8V5h4v3M13 8V5h4v3"/></svg></div>
+          <h3>One container</h3>
+          <p>A single binary in a slim Debian image, configured entirely through environment variables. Built-in health check and Prometheus metrics at <code>/metrics</code>.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="wrap">
+      <h2>What happens to a request</h2>
+      <p class="sub">The expensive path runs once per variant. Everything after that is a lookup.</p>
+      <div class="flow">
+        <div class="step"><b>Verify</b><span>Signature and options are checked. A matching <code>If-None-Match</code> returns <code>304</code> immediately.</span></div>
+        <div class="step"><b>Memory</b><span>Hot variants are served straight from RAM. <code>X-Cache: HIT</code></span></div>
+        <div class="step"><b>S3 cache</b><span>Otherwise the variant is looked up in the cache bucket. <code>X-Cache: HIT-S3</code></span></div>
+        <div class="step"><b>Process</b><span>On a miss the original is fetched and transformed by libvips. <code>X-Cache: MISS</code></span></div>
+        <div class="step"><b>Write back</b><span>The response goes out right away; the upload to the cache bucket happens in the background.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="url">
+    <div class="wrap">
+      <h2>The URL is the API</h2>
+      <p class="sub">A signature, any number of processing options, and the source — either plain or base64url-encoded. Coming from thumbor? <code>/{signature}/fit-in/600x400/smart/path/to/image.jpg</code> works too.</p>
+
+      <div class="anatomy">https://img.example.com/<span class="a-sig">oKfUtW34Dvo2BGQe…</span>/<span class="a-opt">rs:fill:400:300</span>/<span class="a-opt">g:sm</span>/<span class="a-opt">q:80</span>/plain/<span class="a-src">s3://media/cats/tom.jpg</span><span class="a-ext">@webp</span></div>
+      <ul class="legend">
+        <li><b style="color:var(--blue)">signature</b> — HMAC-SHA256 of the rest of the path</li>
+        <li><b style="color:var(--accent)">options</b> — what to do with the image</li>
+        <li><b style="color:var(--green)">source</b> — <code>s3://</code>, <code>http://</code> or <code>https://</code></li>
+        <li><b style="color:#d6a0ff">format</b> — optional; negotiated when omitted</li>
+      </ul>
+
+      <div class="builder">
+        <div class="card fields">
+          <label class="full">Source URL<input id="b-src" value="s3://media/cats/tom.jpg" spellcheck="false"></label>
+          <label>Width<input id="b-w" type="number" min="0" value="400"></label>
+          <label>Height<input id="b-h" type="number" min="0" value="300"></label>
+          <label>Resize<select id="b-rt"><option>fit</option><option selected>fill</option><option>force</option><option>auto</option></select></label>
+          <label>Gravity<select id="b-g"><option value="ce">center</option><option value="sm">smart</option><option value="no">north</option><option value="so">south</option><option value="ea">east</option><option value="we">west</option></select></label>
+          <label>Quality<input id="b-q" type="number" min="1" max="100" value="80"></label>
+          <label>Format<select id="b-f"><option value="">auto</option><option selected>webp</option><option>avif</option><option>jpg</option><option>png</option><option>gif</option></select></label>
+          <label>DPR<select id="b-dpr"><option>1</option><option>2</option><option>3</option></select></label>
+          <label>Blur<input id="b-bl" type="number" min="0" step="0.5" value="0"></label>
+        </div>
+        <div class="out">
+          <pre id="b-out"></pre>
+          <button class="btn copy" id="b-copy" type="button">Copy path</button>
+        </div>
+      </div>
+
+      <div class="cols" style="margin-top:30px">
+        <div class="table">
+          <table>
+            <tr><th>Option</th><th>Meaning</th></tr>
+            <tr><td><code>c:w:h:gravity</code></td><td>Crop the source before resizing.</td></tr>
+            <tr><td><code>rs:type:w:h:enlarge</code></td><td>Resize in one go. Type is <code>fit</code>, <code>fill</code>, <code>force</code> or <code>auto</code>.</td></tr>
+            <tr><td><code>w:400</code> <code>h:300</code></td><td>Width / height. <code>0</code> keeps the aspect ratio.</td></tr>
+            <tr><td><code>s:400:300</code></td><td>Width and height together.</td></tr>
+            <tr><td><code>dpr:2</code></td><td>Multiply the dimensions for high-density screens.</td></tr>
+            <tr><td><code>el:1</code></td><td>Allow upscaling. Off by default.</td></tr>
+            <tr><td><code>g:sm</code></td><td>Crop gravity: <code>ce</code>, <code>no</code>, <code>so</code>, <code>ea</code>, <code>we</code>, corners, or <code>sm</code> (smart).</td></tr>
+          </table>
+        </div>
+        <div class="table">
+          <table>
+            <tr><th>Option</th><th>Meaning</th></tr>
+            <tr><td><code>q:80</code></td><td>Output quality, 1–100.</td></tr>
+            <tr><td><code>f:webp</code></td><td>Output format: <code>jpg</code>, <code>png</code>, <code>webp</code>, <code>avif</code>, <code>gif</code>.</td></tr>
+            <tr><td><code>bl:5</code></td><td>Gaussian blur with the given sigma.</td></tr>
+            <tr><td><code>sh:1</code></td><td>Sharpen with the given sigma.</td></tr>
+            <tr><td><code>bg:ffffff</code></td><td>Background used when flattening transparency.</td></tr>
+            <tr><td><code>cb:v2</code></td><td>Cache buster: forces a fresh variant.</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="start">
+    <div class="wrap">
+      <h2>Run it</h2>
+      <p class="sub">Build the image from the repository and start it with your bucket details. That is the whole deployment.</p>
+<pre><span class="k">git</span> clone https://github.com/noneym/imgrust.git &amp;&amp; cd imgrust
+<span class="k">docker</span> build -t imgrust .
+
+<span class="k">docker</span> run -d -p 8080:8080 \
+  -e IMGRUST_KEY=<span class="s">$(openssl rand -hex 32)</span> \
+  -e IMGRUST_SALT=<span class="s">$(openssl rand -hex 32)</span> \
+  -e IMGRUST_S3_REGION=<span class="s">eu-central-1</span> \
+  -e IMGRUST_S3_ACCESS_KEY=<span class="s">…</span> \
+  -e IMGRUST_S3_SECRET_KEY=<span class="s">…</span> \
+  -e IMGRUST_CACHE_S3_BUCKET=<span class="s">my-image-cache</span> \
+  imgrust
+
+<span class="c"># or try the full local stack (imgrust + a local S3 server)</span>
+<span class="k">docker</span> compose up --build</pre>
+    </div>
+  </section>
+
+  <section id="config">
+    <div class="wrap">
+      <h2>Configuration</h2>
+      <p class="sub">Environment variables only. These are the ones you will most likely touch; the README lists all of them.</p>
+      <div class="table">
+        <table>
+          <tr><th>Variable</th><th>Default</th><th>Purpose</th></tr>
+          <tr><td><code>IMGRUST_KEY</code> / <code>IMGRUST_SALT</code></td><td>—</td><td>Hex-encoded signing key and salt. Without a key, signatures are not checked.</td></tr>
+          <tr><td><code>IMGRUST_THUMBOR_KEY</code> / <code>_BASE_URL</code></td><td>—</td><td>Security key and base location (e.g. <code>s3://media/</code>) for thumbor-style URLs.</td></tr>
+          <tr><td><code>IMGRUST_S3_ENDPOINT</code></td><td>AWS</td><td>Custom endpoint for R2, MinIO, Spaces and friends.</td></tr>
+          <tr><td><code>IMGRUST_S3_REGION</code></td><td>us-east-1</td><td>Bucket region.</td></tr>
+          <tr><td><code>IMGRUST_S3_ACCESS_KEY</code> / <code>_SECRET_KEY</code></td><td>AWS chain</td><td>Credentials. Falls back to the standard AWS credential chain (env, IAM role…).</td></tr>
+          <tr><td><code>IMGRUST_CACHE_S3_BUCKET</code></td><td>—</td><td>Bucket for processed variants. Unset disables the S3 cache layer.</td></tr>
+          <tr><td><code>IMGRUST_CACHE_S3_PREFIX</code></td><td>—</td><td>Key prefix inside the cache bucket.</td></tr>
+          <tr><td><code>IMGRUST_MEM_CACHE_MB</code></td><td>256</td><td>Size of the in-memory cache.</td></tr>
+          <tr><td><code>IMGRUST_WORKERS</code></td><td>CPU count</td><td>Images processed in parallel.</td></tr>
+          <tr><td><code>IMGRUST_AUTO_WEBP</code> / <code>IMGRUST_AUTO_AVIF</code></td><td>true / false</td><td>Format negotiation from the <code>Accept</code> header.</td></tr>
+          <tr><td><code>IMGRUST_ALLOWED_SOURCES</code></td><td>any</td><td>Comma-separated URL prefixes, e.g. <code>s3://media/</code>.</td></tr>
+          <tr><td><code>IMGRUST_MAX_ANIMATION_FRAMES</code></td><td>300</td><td>Frames kept from an animation.</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>imgrust — image processing proxy written in Rust.</span>
+    <span><a href="https://github.com/noneym/imgrust">GitHub</a> · <a href="https://github.com/noneym/imgrust/issues">Issues</a></span>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var ids = ['b-src', 'b-w', 'b-h', 'b-rt', 'b-g', 'b-q', 'b-f', 'b-dpr', 'b-bl'];
+  var path = '';
+  function build() {
+    var w = parseInt($('b-w').value, 10) || 0, h = parseInt($('b-h').value, 10) || 0;
+    var parts = ['{signature}'];
+    if (w || h) parts.push('rs:' + $('b-rt').value + ':' + w + ':' + h);
+    if ($('b-g').value !== 'ce' && $('b-rt').value !== 'fit' && $('b-rt').value !== 'force') parts.push('g:' + $('b-g').value);
+    if ($('b-dpr').value !== '1') parts.push('dpr:' + $('b-dpr').value);
+    var q = parseInt($('b-q').value, 10);
+    if (q >= 1 && q <= 100) parts.push('q:' + q);
+    var bl = parseFloat($('b-bl').value);
+    if (bl > 0) parts.push('bl:' + bl);
+    // '?' and '@' must be escaped inside a plain source URL.
+    var src = $('b-src').value.trim().replace(/%/g, '%25').replace(/\?/g, '%3F').replace(/@/g, '%40').replace(/ /g, '%20');
+    path = '/' + parts.join('/') + '/plain/' + src + ($('b-f').value ? '@' + $('b-f').value : '');
+    $('b-out').textContent = path;
+  }
+  ids.forEach(function (id) { $(id).addEventListener('input', build); });
+  $('b-copy').addEventListener('click', function () {
+    var btn = this;
+    if (!navigator.clipboard) return;
+    navigator.clipboard.writeText(path).then(function () {
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = 'Copy path'; }, 1200);
+    });
+  });
+  build();
+})();
+</script>
+</body>
+</html>
