@@ -160,6 +160,8 @@ There is no expiry inside imgrust: use an S3 **lifecycle rule** on the cache buc
 | `IMGRUST_THUMBOR_CACHE_ROOT` | – | Share thumbor's S3 result storage: thumbor-style results are read from and written to `{root}/[auto_webp/]{request path}` in the cache bucket, the layout of `thumbor_aws.result_storage` (set it to thumbor's `AWS_RESULT_STORAGE_ROOT_PATH`, e.g. `rs`) |
 | `IMGRUST_THUMBOR_AUTO_WEBP` | `false` | thumbor's `AUTO_WEBP` for thumbor-style URLs when sharing its result storage |
 | `IMGRUST_ALLOW_UNSAFE_URL` | `false` | Like thumbor's `ALLOW_UNSAFE_URL`: accept unsigned URLs (`/unsafe/…`, and imgproxy-style URLs when no `IMGRUST_KEY` is set) even though a signing key is configured |
+| `IMGRUST_UNSAFE_REDIRECT` | `false` | Answer unsigned URLs (`/insecure/…`, `/unsafe/…`) with a `301` to their signed form instead of `403`. For migrating links that are already out there |
+| `IMGRUST_UNSAFE_REDIRECT_OPTIONS` | any | Comma-separated allow-list of option strings eligible for that redirect, e.g. `rs:fit:0:210,c:950:600:we/rs:fit:0:210,72x72`. **Set this**: without it the redirect signs anything, which gives no protection |
 | `IMGRUST_BASE_URL` | – | Prefix prepended to source URLs that have no scheme (e.g. `s3://media/`) |
 | `IMGRUST_ALLOWED_SOURCES` | any | Comma-separated list of allowed source URL prefixes |
 | `IMGRUST_S3_ENDPOINT` | AWS | Custom S3 endpoint (R2, MinIO, Spaces…) |

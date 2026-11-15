@@ -27,6 +27,12 @@ pub struct Config {
     pub thumbor_auto_webp: bool,
     /// Like thumbor's ALLOW_UNSAFE_URL: accept unsigned URLs even when a key is set.
     pub allow_unsafe: bool,
+    /// Answer unsigned URLs (`/insecure/...`, `/unsafe/...`) with a 301 to their
+    /// signed form instead of rejecting them.
+    pub unsafe_redirect: bool,
+    /// When non-empty, only these option strings (the part between the
+    /// signature and the source) are eligible for that redirect.
+    pub unsafe_redirect_options: Vec<String>,
 
     pub base_url: String,
     pub allowed_sources: Vec<String>,
@@ -123,6 +129,10 @@ impl Config {
             thumbor_cache_root: var("IMGRUST_THUMBOR_CACHE_ROOT").map(|r| format!("{}/", r.trim_matches('/'))),
             thumbor_auto_webp: flag("IMGRUST_THUMBOR_AUTO_WEBP").unwrap_or(false),
             allow_unsafe: flag("IMGRUST_ALLOW_UNSAFE_URL").unwrap_or(false),
+            unsafe_redirect: flag("IMGRUST_UNSAFE_REDIRECT").unwrap_or(false),
+            unsafe_redirect_options: var("IMGRUST_UNSAFE_REDIRECT_OPTIONS")
+                .map(|v| v.split(',').map(|s| s.trim().trim_matches('/').to_string()).filter(|s| !s.is_empty()).collect())
+                .unwrap_or_default(),
             base_url: var("IMGRUST_BASE_URL").unwrap_or_default(),
             allowed_sources: var("IMGRUST_ALLOWED_SOURCES")
                 .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())

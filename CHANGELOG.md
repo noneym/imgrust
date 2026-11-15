@@ -2,6 +2,16 @@
 
 All notable changes to imgrust are listed here. Versions follow [semantic versioning](https://semver.org).
 
+## 0.3.0 - 2026-11-15
+
+### Added
+- `IMGRUST_UNSAFE_REDIRECT`: unsigned URLs (`/insecure/...`, `/unsafe/...`) are answered with a `301` to their signed form, so links that are already out there keep working after signing is switched on.
+- `IMGRUST_UNSAFE_REDIRECT_OPTIONS`: allow-list of option strings eligible for that redirect; anything else is `403`.
+- `imgrust_signed_redirects_total` metric.
+
+### Fixed
+- imgproxy-style signatures verify when the URL was percent-escaped after signing.
+
 ## 0.2.0 - 2026-11-15
 
 ### Added

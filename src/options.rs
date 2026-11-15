@@ -5,7 +5,7 @@
 //! /{signature}/{option}:{args}/.../{base64url(source_url)}[.{ext}]
 //! ```
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD};
 use base64::Engine;
 use hmac::{Hmac, Mac};
 use percent_encoding::percent_decode_str;
@@ -256,6 +256,51 @@ fn detect_style(sig: &str, rest: &str) -> Style {
     }
 }
 
+/// What a URL asks for: an image, or a redirect to the signed form of itself.
+pub enum Parsed {
+    Request(ImageRequest),
+    Redirect(String),
+}
+
+fn is_placeholder(sig: &str) -> bool {
+    matches!(sig, "insecure" | "unsafe" | "_")
+}
+
+/// The option part of a URL: everything between the signature and the source.
+fn option_prefix(style: Style, rest: &str) -> String {
+    match style {
+        Style::Imgproxy => match rest.find("/plain/") {
+            Some(i) => rest[..i].to_string(),
+            None => rest.split('/').take_while(|s| *s != "plain" && s.contains(':')).collect::<Vec<_>>().join("/"),
+        },
+        Style::Thumbor => {
+            let segs: Vec<&str> = rest.split('/').collect();
+            let opts = &segs[..segs.len().saturating_sub(1)];
+            opts.iter().take_while(|s| is_thumbor_token(s)).copied().collect::<Vec<_>>().join("/")
+        }
+    }
+}
+
+/// Signed equivalent of an unsigned URL path.
+fn signed_location(style: Style, rest: &str, cfg: &Config) -> String {
+    match style {
+        Style::Imgproxy => {
+            let raw = format!("/{rest}");
+            // Sign the canonical form (with "s3://"), as URL builders do.
+            let payload = restore_plain_path(&raw).unwrap_or(raw);
+            let mut mac = Hmac::<Sha256>::new_from_slice(&cfg.key).expect("hmac accepts any key length");
+            mac.update(&cfg.salt);
+            mac.update(payload.as_bytes());
+            format!("/{}{}", URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes()), payload)
+        }
+        Style::Thumbor => {
+            let mut mac = Hmac::<Sha1>::new_from_slice(&cfg.thumbor_key).expect("hmac accepts any key length");
+            mac.update(rest.as_bytes());
+            format!("/{}/{}", URL_SAFE.encode(mac.finalize().into_bytes()), rest)
+        }
+    }
+}
+
 fn invalid_signature() -> AppError {
     AppError::forbidden("invalid signature")
 }
@@ -274,7 +319,13 @@ fn verify_imgproxy(sig: &str, signed_path: &str, cfg: &Config) -> Result<(), App
         // Constant-time comparison.
         mac.verify_slice(&raw).is_ok()
     };
-    if check(signed_path) || restore_plain_path(signed_path).is_some_and(|p| check(&p)) {
+    // The URL may have been re-escaped or had its "//" collapsed on the way
+    // here; accept the signature over any of those spellings.
+    let decoded = percent_decode_str(signed_path).decode_utf8().ok().filter(|d| d != signed_path);
+    if check(signed_path)
+        || restore_plain_path(signed_path).is_some_and(|p| check(&p))
+        || decoded.as_ref().is_some_and(|d| check(d) || restore_plain_path(d).is_some_and(|p| check(&p)))
+    {
         Ok(())
     } else {
         Err(invalid_signature())
@@ -324,14 +375,23 @@ fn has_scheme(s: &str) -> bool {
     s.starts_with("http://") || s.starts_with("https://") || s.starts_with("s3://")
 }
 
-pub fn parse(path: &str, cfg: &Config) -> Result<ImageRequest, AppError> {
+pub fn parse(path: &str, cfg: &Config) -> Result<Parsed, AppError> {
     let path = path.strip_prefix('/').unwrap_or(path);
     let (sig, rest) = path.split_once('/').ok_or_else(|| bad("invalid URL"))?;
 
     let style = detect_style(sig, rest);
+    // Unsigned URL on a signed server: redirect to the signed form instead of
+    // serving or rejecting it (the URL is still fully validated below).
+    let has_key = match style {
+        Style::Imgproxy => !cfg.key.is_empty(),
+        Style::Thumbor => !cfg.thumbor_key.is_empty(),
+    };
+    let redirect = cfg.unsafe_redirect && !cfg.allow_unsafe && has_key && is_placeholder(sig);
     let (source, options) = match style {
         Style::Imgproxy => {
-            verify_imgproxy(sig, &path[sig.len()..], cfg)?;
+            if !redirect {
+                verify_imgproxy(sig, &path[sig.len()..], cfg)?;
+            }
             let (mut source, options) = parse_imgproxy(rest, cfg)?;
             if let Some(fixed) = restore_scheme(&source) {
                 source = fixed;
@@ -342,7 +402,9 @@ pub fn parse(path: &str, cfg: &Config) -> Result<ImageRequest, AppError> {
             (source, options)
         }
         Style::Thumbor => {
-            verify_thumbor(sig, rest, cfg)?;
+            if !redirect {
+                verify_thumbor(sig, rest, cfg)?;
+            }
             let (mut source, options) = parse_thumbor(rest)?;
             if let Some(fixed) = restore_scheme(&source) {
                 source = fixed;
@@ -367,9 +429,18 @@ pub fn parse(path: &str, cfg: &Config) -> Result<ImageRequest, AppError> {
         return Err(bad(format!("requested dimensions exceed the limit of {}px", cfg.max_dimension)));
     }
 
+    if redirect {
+        let prefix = option_prefix(style, rest);
+        if !cfg.unsafe_redirect_options.is_empty() && !cfg.unsafe_redirect_options.iter().any(|o| *o == prefix) {
+            tracing::info!(options = %prefix, "unsigned URL refused: options are not in IMGRUST_UNSAFE_REDIRECT_OPTIONS");
+            return Err(AppError::forbidden("unsigned URLs are not allowed for these options"));
+        }
+        return Ok(Parsed::Redirect(signed_location(style, rest, cfg)));
+    }
+
     let thumbor_path =
         (style == Style::Thumbor).then(|| percent_decode_str(path).decode_utf8_lossy().trim_start_matches('/').to_string());
-    Ok(ImageRequest { source, options, thumbor_path })
+    Ok(Parsed::Request(ImageRequest { source, options, thumbor_path }))
 }
 
 /// thumbor grammar:

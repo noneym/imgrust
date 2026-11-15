@@ -33,6 +33,7 @@ struct Metrics {
     requests: AtomicU64,
     errors: AtomicU64,
     not_modified: AtomicU64,
+    redirects: AtomicU64,
     mem_hits: AtomicU64,
     s3_hits: AtomicU64,
     misses: AtomicU64,
@@ -169,6 +170,7 @@ async fn metrics(State(app): State<Arc<App>>) -> impl IntoResponse {
         "# TYPE imgrust_requests_total counter\nimgrust_requests_total {}\n\
          # TYPE imgrust_errors_total counter\nimgrust_errors_total {}\n\
          # TYPE imgrust_not_modified_total counter\nimgrust_not_modified_total {}\n\
+         # TYPE imgrust_signed_redirects_total counter\nimgrust_signed_redirects_total {}\n\
          # TYPE imgrust_cache_hits_total counter\nimgrust_cache_hits_total{{layer=\"memory\"}} {}\nimgrust_cache_hits_total{{layer=\"s3\"}} {}\n\
          # TYPE imgrust_cache_misses_total counter\nimgrust_cache_misses_total {}\n\
          # TYPE imgrust_processing_seconds_total counter\nimgrust_processing_seconds_total {:.6}\n\
@@ -178,6 +180,7 @@ async fn metrics(State(app): State<Arc<App>>) -> impl IntoResponse {
         g(&m.requests),
         g(&m.errors),
         g(&m.not_modified),
+        g(&m.redirects),
         g(&m.mem_hits),
         g(&m.s3_hits),
         g(&m.misses),
@@ -215,7 +218,17 @@ async fn image(State(app): State<Arc<App>>, method: Method, uri: Uri, headers: H
 }
 
 async fn serve(app: &Arc<App>, method: &Method, uri: &Uri, headers: &HeaderMap) -> Result<Response, AppError> {
-    let req = options::parse(uri.path(), &app.cfg)?;
+    let req = match options::parse(uri.path(), &app.cfg)? {
+        options::Parsed::Request(req) => req,
+        options::Parsed::Redirect(location) => {
+            app.metrics.redirects.fetch_add(1, Ordering::Relaxed);
+            let location = HeaderValue::from_str(&location).map_err(|_| AppError::bad_request("invalid URL"))?;
+            let mut res = StatusCode::MOVED_PERMANENTLY.into_response();
+            res.headers_mut().insert(header::LOCATION, location);
+            res.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=86400"));
+            return Ok(res);
+        }
+    };
 
     // Format negotiation only matters when the URL does not pin a format.
     let auto = req.options.format.is_none();
