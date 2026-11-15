@@ -111,6 +111,14 @@ impl Fetcher {
         Ok(buf.freeze())
     }
 
+    /// True only when the bucket listing positively says the key is absent.
+    async fn is_missing(&self, bucket: &str, key: &str) -> bool {
+        match self.s3.list_objects_v2().bucket(bucket).prefix(key).max_keys(1).send().await {
+            Ok(out) => !out.contents().iter().any(|o| o.key() == Some(key)),
+            Err(_) => false,
+        }
+    }
+
     async fn fetch_s3(&self, rest: &str) -> Result<Bytes, AppError> {
         let (bucket, key) = rest
             .split_once('/')
@@ -120,9 +128,16 @@ impl Fetcher {
         let out = match self.s3.get_object().bucket(bucket).key(key).send().await {
             Ok(o) => o,
             Err(e) => {
-                let detail = format!("{}", DisplayErrorContext(&e));
+                let detail = brief(&format!("{}", DisplayErrorContext(&e)));
                 let svc = e.into_service_error();
                 if svc.is_no_such_key() {
+                    return Err(AppError::not_found("source image not found"));
+                }
+                // Some S3 front ends answer a missing object with a bare 5xx
+                // page instead of NoSuchKey. Ask the listing API, which does
+                // answer properly, before calling it an outage.
+                if aws_sdk_s3::error::ProvideErrorMetadata::code(&svc).is_none() && self.is_missing(bucket, key).await {
+                    tracing::debug!(bucket, key, "S3 source does not exist");
                     return Err(AppError::not_found("source image not found"));
                 }
                 tracing::warn!(bucket, key, error = %detail, "S3 source fetch failed");

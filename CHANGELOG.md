@@ -1,0 +1,21 @@
+# Changelog
+
+All notable changes to imgrust are listed here. Versions follow [semantic versioning](https://semver.org).
+
+## 0.2.0 - 2026-11-15
+
+### Added
+- thumbor-style URLs (`/{sig}/fit-in/{W}x{H}/smart/filters:.../{path}`) with HMAC-SHA1 signatures, served side by side with imgproxy-style URLs.
+- `c:` / `crop:` option: crop the source before resizing.
+- Shared result cache with thumbor (`IMGRUST_THUMBOR_CACHE_ROOT`): reads and writes the `thumbor_aws.result_storage` layout.
+- `IMGRUST_ALLOW_UNSAFE_URL`, `IMGRUST_THUMBOR_KEY`, `IMGRUST_THUMBOR_BASE_URL`, `IMGRUST_THUMBOR_AUTO_WEBP`.
+- `GET /version` and a `Server: imgrust/x.y.z` response header; the version is logged at startup.
+
+### Fixed
+- Source URLs whose `//` was collapsed by a reverse proxy (`s3:/bucket/key`) are accepted.
+- S3 front ends that answer a missing object with a bare 5xx: a missing source is now a `404` instead of a `502`, and a missing cache object is a plain miss without SDK retries.
+- Error logs no longer dump the whole HTTP exchange.
+
+## 0.1.0 - 2026-11-14
+
+- Initial release: resize, crop, quality and format conversion (JPEG, PNG, WebP, AVIF, GIF) on libvips, animated WebP/GIF, S3 and HTTP sources, in-memory and S3 result cache, request coalescing, signed imgproxy-style URLs, Dockerfile and landing page.

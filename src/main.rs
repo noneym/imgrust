@@ -89,6 +89,7 @@ async fn run() {
         .build();
 
     tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
         bind = %cfg.bind,
         workers = cfg.workers,
         signed_urls = !(cfg.key.is_empty() && cfg.thumbor_key.is_empty()),
@@ -111,6 +112,7 @@ async fn run() {
 
     let router = Router::new()
         .route("/health", get(|| async { "ok" }))
+        .route("/version", get(|| async { env!("CARGO_PKG_VERSION") }))
         .route("/metrics", get(metrics))
         .fallback(image)
         .with_state(app.clone());
@@ -297,6 +299,7 @@ fn common_headers(h: &mut HeaderMap, app: &App, etag: &str, auto: bool) {
         h.insert(header::VARY, HeaderValue::from_static("Accept"));
     }
     h.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    h.insert(header::SERVER, HeaderValue::from_static(concat!("imgrust/", env!("CARGO_PKG_VERSION"))));
 }
 
 /// Cold path: S3 cache lookup, then fetch + process + write back.

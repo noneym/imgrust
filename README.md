@@ -191,6 +191,7 @@ There is no expiry inside imgrust: use an S3 **lifecycle rule** on the cache buc
 ## Endpoints
 
 - `GET /health` – liveness
+- `GET /version` – running version (also sent as the `Server: imgrust/x.y.z` response header)
 - `GET /metrics` – Prometheus counters (requests, cache hits per layer, misses, processing time…)
 
 ## Security notes
@@ -206,6 +207,10 @@ There is no expiry inside imgrust: use an S3 **lifecycle rule** on the cache buc
 ```bash
 docker build -t imgrust-landing landing && docker run -p 8081:80 imgrust-landing
 ```
+
+## Versioning
+
+imgrust follows semantic versioning. The version lives in `Cargo.toml`, every release is a `vX.Y.Z` git tag, and changes are listed in [CHANGELOG.md](CHANGELOG.md). Cache keys carry their own format version, so upgrading never serves variants produced by incompatible settings.
 
 ## Development
 
