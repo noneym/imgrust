@@ -2,6 +2,13 @@
 
 All notable changes to imgrust are listed here. Versions follow [semantic versioning](https://semver.org).
 
+## 0.3.1 - 2026-11-15
+
+### Changed
+- A refused unsigned URL is logged with its path, so the missing option string can be identified.
+- S3 errors are logged with the HTTP status the store answered with.
+- `IMGRUST_UNSAFE_REDIRECT_OPTIONS` accepts `none` for URLs without any processing option.
+
 ## 0.3.0 - 2026-11-15
 
 ### Added

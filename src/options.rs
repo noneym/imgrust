@@ -432,7 +432,11 @@ pub fn parse(path: &str, cfg: &Config) -> Result<Parsed, AppError> {
     if redirect {
         let prefix = option_prefix(style, rest);
         if !cfg.unsafe_redirect_options.is_empty() && !cfg.unsafe_redirect_options.iter().any(|o| *o == prefix) {
-            tracing::info!(options = %prefix, "unsigned URL refused: options are not in IMGRUST_UNSAFE_REDIRECT_OPTIONS");
+            tracing::info!(
+                options = %if prefix.is_empty() { "none" } else { prefix.as_str() },
+                path = %rest,
+                "unsigned URL refused: options are not in IMGRUST_UNSAFE_REDIRECT_OPTIONS"
+            );
             return Err(AppError::forbidden("unsigned URLs are not allowed for these options"));
         }
         return Ok(Parsed::Redirect(signed_location(style, rest, cfg)));

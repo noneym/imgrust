@@ -128,7 +128,7 @@ impl Fetcher {
         let out = match self.s3.get_object().bucket(bucket).key(key).send().await {
             Ok(o) => o,
             Err(e) => {
-                let detail = brief(&format!("{}", DisplayErrorContext(&e)));
+                let detail = describe(&e);
                 let svc = e.into_service_error();
                 if svc.is_no_such_key() {
                     return Err(AppError::not_found("source image not found"));
@@ -199,7 +199,7 @@ impl S3Cache {
         let out = match self.client.get_object().bucket(&self.bucket).key(object).send().await {
             Ok(o) => o,
             Err(e) => {
-                let detail = brief(&format!("{}", DisplayErrorContext(&e)));
+                let detail = describe(&e);
                 let svc = e.into_service_error();
                 if svc.is_no_such_key() {
                     return Ok(None);
@@ -233,11 +233,24 @@ impl S3Cache {
             .send()
             .await
             .map(|_| ())
-            .map_err(|e| brief(&format!("{}", DisplayErrorContext(&e))))
+            .map_err(|e| describe(&e))
+    }
+}
+
+/// One-line summary of an SDK error: the HTTP status the store answered with
+/// (when it answered at all) followed by the start of the error text.
+fn describe<E>(e: &aws_sdk_s3::error::SdkError<E>) -> String
+where
+    E: std::error::Error + 'static,
+{
+    let text = brief(&format!("{}", DisplayErrorContext(e)));
+    match e.raw_response() {
+        Some(r) => format!("http {} - {}", r.status().as_u16(), text),
+        None => format!("no response - {text}"),
     }
 }
 
 /// SDK errors print the whole HTTP exchange; keep log lines readable.
 fn brief(s: &str) -> String {
-    s.chars().take(240).collect()
+    s.chars().take(160).collect()
 }

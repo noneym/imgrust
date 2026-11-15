@@ -131,7 +131,14 @@ impl Config {
             allow_unsafe: flag("IMGRUST_ALLOW_UNSAFE_URL").unwrap_or(false),
             unsafe_redirect: flag("IMGRUST_UNSAFE_REDIRECT").unwrap_or(false),
             unsafe_redirect_options: var("IMGRUST_UNSAFE_REDIRECT_OPTIONS")
-                .map(|v| v.split(',').map(|s| s.trim().trim_matches('/').to_string()).filter(|s| !s.is_empty()).collect())
+                // "none" stands for a URL without any processing option.
+                .map(|v| {
+                    v.split(',')
+                        .map(|s| s.trim().trim_matches('/'))
+                        .filter(|s| !s.is_empty())
+                        .map(|s| if s == "none" { String::new() } else { s.to_string() })
+                        .collect()
+                })
                 .unwrap_or_default(),
             base_url: var("IMGRUST_BASE_URL").unwrap_or_default(),
             allowed_sources: var("IMGRUST_ALLOWED_SOURCES")
