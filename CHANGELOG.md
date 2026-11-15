@@ -2,6 +2,11 @@
 
 All notable changes to imgrust are listed here. Versions follow [semantic versioning](https://semver.org).
 
+## 0.3.2 - 2026-11-15
+
+### Fixed
+- Truncated WebP sources (an upload or encode that was cut short: RIFF size of 0 and an incomplete last frame) are no longer rejected with `webp: unable to parse image`; the frames that arrived complete are served.
+
 ## 0.3.1 - 2026-11-15
 
 ### Changed

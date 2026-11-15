@@ -192,6 +192,41 @@ fn sniff(b: &[u8]) -> Option<SourceFormat> {
     None
 }
 
+/// A WebP whose upload or encode was cut short: the RIFF header announces no
+/// size (encoders patch it in last) or more bytes than there are, and the
+/// final chunk is incomplete. libwebp refuses such a file outright. Returns a
+/// copy cut after the last complete chunk with a correct header, so that the
+/// frames that did arrive can be served. `None` when the file is intact or
+/// nothing usable is left.
+fn repair_truncated_webp(b: &[u8]) -> Option<Bytes> {
+    if b.len() < 20 || !b.starts_with(b"RIFF") || &b[8..12] != b"WEBP" {
+        return None;
+    }
+    let declared = u32::from_le_bytes([b[4], b[5], b[6], b[7]]) as usize;
+    if declared != 0 && declared + 8 <= b.len() {
+        return None;
+    }
+    let (mut pos, mut images) = (12usize, 0u32);
+    while pos + 8 <= b.len() {
+        let size = u32::from_le_bytes([b[pos + 4], b[pos + 5], b[pos + 6], b[pos + 7]]) as usize;
+        // Chunks are padded to an even length.
+        let end = pos + 8 + size + (size & 1);
+        if end > b.len() {
+            break;
+        }
+        if matches!(&b[pos..pos + 4], b"ANMF" | b"VP8 " | b"VP8L") {
+            images += 1;
+        }
+        pos = end;
+    }
+    if images == 0 {
+        return None;
+    }
+    let mut out = b[..pos].to_vec();
+    out[4..8].copy_from_slice(&((pos - 8) as u32).to_le_bytes());
+    Some(Bytes::from(out))
+}
+
 /// Format of an already encoded image, for cache objects without a Content-Type.
 pub fn sniff_output_format(b: &[u8]) -> Option<Format> {
     Some(match sniff(b)? {
@@ -354,6 +389,16 @@ fn pick_format(src: SourceFormat, animated: bool, explicit: Option<Format>, neg:
 /// blocking thread.
 pub fn process(src: &Bytes, o: &Options, neg: Negotiated, cfg: &Config) -> Result<Output, ProcError> {
     let src_format = sniff(src).ok_or(ProcError::Unsupported)?;
+
+    let repaired;
+    let src = match (src_format, repair_truncated_webp(src)) {
+        (SourceFormat::Webp, Some(fixed)) => {
+            tracing::debug!(from = src.len(), to = fixed.len(), "truncated WebP source: keeping its complete frames");
+            repaired = fixed;
+            &repaired
+        }
+        _ => src,
+    };
 
     // Header-only load: cheap, and tells us what we are dealing with before
     // any pixel is decoded.
